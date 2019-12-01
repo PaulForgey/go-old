@@ -19,6 +19,8 @@ import (
 // if handled == false, sendFile performed no work.
 func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 	var remain int64 = 1 << 62 // by default, copy until EOF
+	var offp *int64
+	var f *os.File
 
 	lr, ok := r.(*io.LimitedReader)
 	if ok {
@@ -27,9 +29,24 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 			return 0, nil, true
 		}
 	}
-	f, ok := r.(*os.File)
-	if !ok {
-		return 0, nil, false
+	sr, ok := r.(*io.SectionReader)
+	if ok {
+		f, ok = sr.ReaderAt().(*os.File)
+		if !ok {
+			return 0, nil, false
+		}
+		pos, _ := sr.Seek(0, io.SeekCurrent)
+		length := sr.Size() - pos
+		off := sr.Base() + pos
+		offp = &off
+		if remain > length {
+			remain = length
+		}
+	} else {
+		f, ok = r.(*os.File)
+		if !ok {
+			return 0, nil, false
+		}
 	}
 
 	sc, err := f.SyscallConn()
@@ -39,7 +56,7 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 
 	var werr error
 	err = sc.Read(func(fd uintptr) bool {
-		written, werr = poll.SendFile(&c.pfd, int(fd), remain)
+		written, werr = poll.SendFile(&c.pfd, int(fd), offp, remain)
 		return true
 	})
 	if err == nil {
@@ -48,6 +65,9 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 
 	if lr != nil {
 		lr.N = remain - written
+	}
+	if sr != nil {
+		sr.Seek(written, io.SeekCurrent)
 	}
 	return written, wrapSyscallError("sendfile", err), written > 0
 }

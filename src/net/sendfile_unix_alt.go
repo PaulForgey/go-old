@@ -26,6 +26,8 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 	// exactly the number of bytes told to. As such, we need to
 	// know exactly how many bytes to send.
 	var remain int64 = 0
+	var pos int64
+	var f *os.File
 
 	lr, ok := r.(*io.LimitedReader)
 	if ok {
@@ -34,9 +36,34 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 			return 0, nil, true
 		}
 	}
-	f, ok := r.(*os.File)
-	if !ok {
-		return 0, nil, false
+	sr, ok := r.(*io.SectionReader)
+	if ok {
+		f, ok = sr.ReaderAt().(*os.File)
+		if !ok {
+			return 0, nil, false
+		}
+		off, _ := sr.Seek(0, io.SeekCurrent)
+		length := sr.Size() - off
+		pos = sr.Base() + off
+		if remain == 0 || remain > length {
+			remain = length
+		}
+	} else {
+		var err error
+
+		f, ok = r.(*os.File)
+		if !ok {
+			return 0, nil, false
+		}
+		// The other quirk with FreeBSD/DragonFly/Solaris's sendfile
+		// implementation is that it doesn't use the current position
+		// of the file -- if you pass it offset 0, it starts from
+		// offset 0. There's no way to tell it "start from current
+		// position", so we have to manage that explicitly.
+		pos, err = f.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return 0, err, false
+		}
 	}
 
 	if remain == 0 {
@@ -46,16 +73,6 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 		}
 
 		remain = fi.Size()
-	}
-
-	// The other quirk with FreeBSD/DragonFly/Solaris's sendfile
-	// implementation is that it doesn't use the current position
-	// of the file -- if you pass it offset 0, it starts from
-	// offset 0. There's no way to tell it "start from current
-	// position", so we have to manage that explicitly.
-	pos, err := f.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return 0, err, false
 	}
 
 	sc, err := f.SyscallConn()
@@ -75,10 +92,13 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 	if lr != nil {
 		lr.N = remain - written
 	}
-
-	_, err1 := f.Seek(written, io.SeekCurrent)
-	if err1 != nil && err == nil {
-		return written, err1, written > 0
+	if sr != nil {
+		sr.Seek(written, io.SeekCurrent)
+	} else {
+		_, err1 := f.Seek(written, io.SeekCurrent)
+		if err1 != nil && err == nil {
+			return written, err1, written > 0
+		}
 	}
 
 	return written, wrapSyscallError("sendfile", err), written > 0

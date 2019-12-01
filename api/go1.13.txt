@@ -8030,3 +8030,5 @@ pkg unicode, var Makasar *RangeTable
 pkg unicode, var Medefaidrin *RangeTable
 pkg unicode, var Old_Sogdian *RangeTable
 pkg unicode, var Sogdian *RangeTable
+pkg io, method (*SectionReader) Base() int64
+pkg io, method (*SectionReader) ReaderAt() ReaderAt

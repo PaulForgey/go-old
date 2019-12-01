@@ -96,6 +96,63 @@ func TestSendfile(t *testing.T) {
 	}
 }
 
+func TestSendfileSections(t *testing.T) {
+	ln, err := newLocalListener("tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	errc := make(chan error, 1)
+	go func(ln Listener) {
+		// Wait for a connection.
+		conn, err := ln.Accept()
+		if err != nil {
+			errc <- err
+			close(errc)
+			return
+		}
+
+		go func() {
+			defer close(errc)
+			defer conn.Close()
+
+			f, err := os.Open(newton)
+			if err != nil {
+				errc <- err
+				return
+			}
+			defer f.Close()
+
+			for i := int64(0); i < 3; i++ {
+				s := io.NewSectionReader(f, i*3, 3)
+				_, err = io.Copy(conn, s)
+				if err != nil {
+					errc <- err
+					return
+				}
+			}
+		}()
+	}(ln)
+
+	c, err := Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(c)
+
+	if want, have := "Produced ", buf.String(); have != want {
+		t.Errorf("unexpected server reply %q, want %q", have, want)
+	}
+
+	for err := range errc {
+		t.Error(err)
+	}
+}
+
 func TestSendfileParts(t *testing.T) {
 	ln, err := newLocalListener("tcp")
 	if err != nil {

@@ -517,6 +517,12 @@ func (s *SectionReader) ReadAt(p []byte, off int64) (n int, err error) {
 // Size returns the size of the section in bytes.
 func (s *SectionReader) Size() int64 { return s.limit - s.base }
 
+// ReaderAt returns the underlying ReaderAt
+func (s *SectionReader) ReaderAt() ReaderAt { return s.r }
+
+// Base returns the underlying base offset
+func (s *SectionReader) Base() int64 { return s.base }
+
 // TeeReader returns a Reader that writes to w what it reads from r.
 // All reads from r performed through it are matched with
 // corresponding writes to w. There is no internal buffering -
